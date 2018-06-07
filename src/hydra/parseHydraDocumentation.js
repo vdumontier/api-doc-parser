@@ -2,6 +2,7 @@ import { promises } from "jsonld";
 import get from "lodash.get";
 import Api from "../Api";
 import Field from "../Field";
+import Filter from "../Filter";
 import Resource from "../Resource";
 import Operation from "../Operation";
 import fetchJsonLd from "./fetchJsonLd";
@@ -117,6 +118,14 @@ function fetchEntrypointAndDocs(entrypointUrl, options = {}) {
     );
 }
 
+function fetchResource(entrypointUrl) {
+  return fetchJsonLd(entrypointUrl, { items_per_page: 0 }).then(d => {
+    return {
+      filters: get(d, "body.hydra:search.hydra:mapping")
+    };
+  });
+}
+
 function removeTrailingSlash(url) {
   if (/\/$/.test(url)) {
     url = url.slice(0, -1);
@@ -180,6 +189,33 @@ function findRelatedClass(docs, property) {
   throw new Error(`Cannot find the class related to ${property["@id"]}.`);
 }
 
+async function addFilters(api) {
+  for (const resource of api.resources) {
+    const resourceFilters = [];
+
+    let response = await fetchResource(resource.url);
+
+    if (response["filters"]) {
+      for (const filter of response["filters"]) {
+        let property = filter["property"];
+
+        // To prevent PropertyFilter, maybe should be handle specifically ?
+        if (property === null) {
+          continue;
+        }
+
+        const resourceFilter = new Filter(property, filter["variable"]);
+
+        resourceFilters.push(resourceFilter);
+      }
+    }
+
+    resource.filters = resourceFilters;
+  }
+
+  return api;
+}
+
 /**
  * Parses a Hydra documentation and converts it to an intermediate representation.
  *
@@ -190,157 +226,203 @@ function findRelatedClass(docs, property) {
 export default function parseHydraDocumentation(entrypointUrl, options = {}) {
   entrypointUrl = removeTrailingSlash(entrypointUrl);
 
-  return fetchEntrypointAndDocs(entrypointUrl, options).then(
-    ({ entrypoint, docs, response }) => {
-      const resources = [],
-        fields = [],
-        operations = [];
-      const title = get(
-        docs,
-        '[0]["http://www.w3.org/ns/hydra/core#title"][0]["@value"]',
-        "API Platform"
-      );
-
-      const entrypointType = get(entrypoint, '[0]["@type"][0]');
-      if (!entrypointType) {
-        throw new Error('The API entrypoint has no "@type" key.');
-      }
-
-      const entrypointClass = findSupportedClass(docs, entrypointType);
-      if (
-        !Array.isArray(
-          entrypointClass["http://www.w3.org/ns/hydra/core#supportedProperty"]
-        )
-      ) {
-        throw new Error(
-          'The entrypoint definition has no "http://www.w3.org/ns/hydra/core#supportedProperty" key or it is not an array.'
+  return fetchEntrypointAndDocs(entrypointUrl, options)
+    .then(
+      ({ entrypoint, docs, response }) => {
+        const resources = [],
+          fields = [],
+          operations = [];
+        const title = get(
+          docs,
+          '[0]["http://www.w3.org/ns/hydra/core#title"][0]["@value"]',
+          "API Platform"
         );
-      }
 
-      // Add resources
-      for (const properties of entrypointClass[
-        "http://www.w3.org/ns/hydra/core#supportedProperty"
-      ]) {
-        const readableFields = [],
-          resourceFields = [],
-          writableFields = [],
-          resourceOperations = [];
-
-        const property = get(
-          properties,
-          '["http://www.w3.org/ns/hydra/core#property"][0]'
-        );
-        if (!property) {
-          continue;
+        const entrypointType = get(entrypoint, '[0]["@type"][0]');
+        if (!entrypointType) {
+          throw new Error('The API entrypoint has no "@type" key.');
         }
 
-        // Add fields
-        const relatedClass = findRelatedClass(docs, property);
-        for (const supportedProperties of relatedClass[
+        const entrypointClass = findSupportedClass(docs, entrypointType);
+        if (
+          !Array.isArray(
+            entrypointClass["http://www.w3.org/ns/hydra/core#supportedProperty"]
+          )
+        ) {
+          throw new Error(
+            'The entrypoint definition has no "http://www.w3.org/ns/hydra/core#supportedProperty" key or it is not an array.'
+          );
+        }
+
+        // Add resources
+        for (const properties of entrypointClass[
           "http://www.w3.org/ns/hydra/core#supportedProperty"
         ]) {
-          const supportedProperty = get(
-            supportedProperties,
+          const readableFields = [],
+            resourceFields = [],
+            writableFields = [],
+            resourceOperations = [];
+
+          const property = get(
+            properties,
             '["http://www.w3.org/ns/hydra/core#property"][0]'
           );
-          const range = get(
-            supportedProperty,
-            '["http://www.w3.org/2000/01/rdf-schema#range"][0]["@id"]',
-            null
-          );
+          if (!property) {
+            continue;
+          }
 
-          const field = new Field(
-            supportedProperty["http://www.w3.org/2000/01/rdf-schema#label"][0][
-              "@value"
-            ],
-            {
-              id: supportedProperty["@id"],
-              range: range,
-              reference:
-                "http://www.w3.org/ns/hydra/core#Link" ===
-                get(property, '["@type"][0]')
-                  ? range
-                  : null, // Will be updated in a subsequent pass
-              required: get(
+          // Add fields
+          const relatedClass = findRelatedClass(docs, property);
+          for (const supportedProperties of relatedClass[
+            "http://www.w3.org/ns/hydra/core#supportedProperty"
+          ]) {
+            const supportedProperty = get(
+              supportedProperties,
+              '["http://www.w3.org/ns/hydra/core#property"][0]'
+            );
+            const range = get(
+              supportedProperty,
+              '["http://www.w3.org/2000/01/rdf-schema#range"][0]["@id"]',
+              null
+            );
+
+            const field = new Field(
+              supportedProperty[
+                "http://www.w3.org/2000/01/rdf-schema#label"
+              ][0]["@value"],
+              {
+                id: supportedProperty["@id"],
+                range: range,
+                reference:
+                  "http://www.w3.org/ns/hydra/core#Link" ===
+                  get(property, '["@type"][0]')
+                    ? range
+                    : null, // Will be updated in a subsequent pass
+                required: get(
+                  supportedProperties,
+                  '["http://www.w3.org/ns/hydra/core#required"][0]["@value"]',
+                  false
+                ),
+                description: get(
+                  supportedProperties,
+                  '["http://www.w3.org/ns/hydra/core#description"][0]["@value"]',
+                  ""
+                ),
+                maxCardinality: get(
+                  supportedProperty,
+                  '["http://www.w3.org/2002/07/owl#maxCardinality"][0]["@value"]',
+                  null
+                ),
+                deprecated: get(
+                  supportedProperties,
+                  '["http://www.w3.org/2002/07/owl#deprecated"][0]["@value"]',
+                  false
+                )
+              }
+            );
+
+            fields.push(field);
+            resourceFields.push(field);
+
+            if (
+              get(
                 supportedProperties,
-                '["http://www.w3.org/ns/hydra/core#required"][0]["@value"]',
-                false
-              ),
-              description: get(
-                supportedProperties,
-                '["http://www.w3.org/ns/hydra/core#description"][0]["@value"]',
-                ""
-              ),
-              maxCardinality: get(
-                supportedProperty,
-                '["http://www.w3.org/2002/07/owl#maxCardinality"][0]["@value"]',
-                null
-              ),
-              deprecated: get(
-                supportedProperties,
-                '["http://www.w3.org/2002/07/owl#deprecated"][0]["@value"]',
-                false
+                '["http://www.w3.org/ns/hydra/core#readable"][0]["@value"]'
               )
+            ) {
+              readableFields.push(field);
             }
-          );
 
-          fields.push(field);
-          resourceFields.push(field);
-
-          if (
-            get(
-              supportedProperties,
-              '["http://www.w3.org/ns/hydra/core#readable"][0]["@value"]'
-            )
-          ) {
-            readableFields.push(field);
+            if (
+              get(
+                supportedProperties,
+                '["http://www.w3.org/ns/hydra/core#writable"][0]["@value"]'
+              )
+            ) {
+              writableFields.push(field);
+            }
           }
 
-          if (
-            get(
-              supportedProperties,
-              '["http://www.w3.org/ns/hydra/core#writable"][0]["@value"]'
-            )
-          ) {
-            writableFields.push(field);
-          }
-        }
+          // parse entrypoint's operations (a.k.a. collection operations)
+          if (property["http://www.w3.org/ns/hydra/core#supportedOperation"]) {
+            for (const entrypointOperation of property[
+              "http://www.w3.org/ns/hydra/core#supportedOperation"
+            ]) {
+              if (
+                !entrypointOperation["http://www.w3.org/ns/hydra/core#returns"]
+              ) {
+                continue;
+              }
 
-        // parse entrypoint's operations (a.k.a. collection operations)
-        if (property["http://www.w3.org/ns/hydra/core#supportedOperation"]) {
-          for (const entrypointOperation of property[
+              const range =
+                entrypointOperation[
+                  "http://www.w3.org/ns/hydra/core#returns"
+                ][0]["@id"];
+              const operation = new Operation(
+                entrypointOperation[
+                  "http://www.w3.org/2000/01/rdf-schema#label"
+                ][0]["@value"],
+                {
+                  method:
+                    entrypointOperation[
+                      "http://www.w3.org/ns/hydra/core#method"
+                    ][0]["@value"],
+                  expects:
+                    entrypointOperation[
+                      "http://www.w3.org/ns/hydra/core#expects"
+                    ] &&
+                    entrypointOperation[
+                      "http://www.w3.org/ns/hydra/core#expects"
+                    ][0]["@id"],
+                  returns: range,
+                  types: entrypointOperation["@type"],
+                  deprecated: get(
+                    entrypointOperation,
+                    '["http://www.w3.org/2002/07/owl#deprecated"][0]["@value"]',
+                    false
+                  )
+                }
+              );
+
+              resourceOperations.push(operation);
+              operations.push(operation);
+            }
+          }
+
+          // parse resource operations (a.k.a. item operations)
+          for (const supportedOperation of relatedClass[
             "http://www.w3.org/ns/hydra/core#supportedOperation"
           ]) {
             if (
-              !entrypointOperation["http://www.w3.org/ns/hydra/core#returns"]
+              !supportedOperation["http://www.w3.org/ns/hydra/core#returns"]
             ) {
               continue;
             }
 
             const range =
-              entrypointOperation["http://www.w3.org/ns/hydra/core#returns"][0][
+              supportedOperation["http://www.w3.org/ns/hydra/core#returns"][0][
                 "@id"
               ];
             const operation = new Operation(
-              entrypointOperation[
+              supportedOperation[
                 "http://www.w3.org/2000/01/rdf-schema#label"
               ][0]["@value"],
               {
                 method:
-                  entrypointOperation[
+                  supportedOperation[
                     "http://www.w3.org/ns/hydra/core#method"
                   ][0]["@value"],
                 expects:
-                  entrypointOperation[
+                  supportedOperation[
                     "http://www.w3.org/ns/hydra/core#expects"
                   ] &&
-                  entrypointOperation[
+                  supportedOperation[
                     "http://www.w3.org/ns/hydra/core#expects"
                   ][0]["@id"],
                 returns: range,
-                types: entrypointOperation["@type"],
+                types: supportedOperation["@type"],
                 deprecated: get(
-                  entrypointOperation,
+                  supportedOperation,
                   '["http://www.w3.org/2002/07/owl#deprecated"][0]["@value"]',
                   false
                 )
@@ -350,93 +432,58 @@ export default function parseHydraDocumentation(entrypointUrl, options = {}) {
             resourceOperations.push(operation);
             operations.push(operation);
           }
-        }
 
-        // parse resource operations (a.k.a. item operations)
-        for (const supportedOperation of relatedClass[
-          "http://www.w3.org/ns/hydra/core#supportedOperation"
-        ]) {
-          if (!supportedOperation["http://www.w3.org/ns/hydra/core#returns"]) {
-            continue;
+          const url = get(entrypoint, `[0]["${property["@id"]}"][0]["@id"]`);
+          if (!url) {
+            throw new Error(`Unable to find the URL for "${property["@id"]}".`);
           }
 
-          const range =
-            supportedOperation["http://www.w3.org/ns/hydra/core#returns"][0][
-              "@id"
-            ];
-          const operation = new Operation(
-            supportedOperation["http://www.w3.org/2000/01/rdf-schema#label"][0][
-              "@value"
-            ],
-            {
-              method:
-                supportedOperation["http://www.w3.org/ns/hydra/core#method"][0][
-                  "@value"
-                ],
-              expects:
-                supportedOperation["http://www.w3.org/ns/hydra/core#expects"] &&
-                supportedOperation[
-                  "http://www.w3.org/ns/hydra/core#expects"
-                ][0]["@id"],
-              returns: range,
-              types: supportedOperation["@type"],
+          resources.push(
+            new Resource(guessNameFromUrl(url, entrypointUrl), url, {
+              id: relatedClass["@id"],
+              title: get(
+                relatedClass,
+                '["http://www.w3.org/ns/hydra/core#title"][0]["@value"]',
+                ""
+              ),
+              fields: resourceFields,
+              readableFields,
+              writableFields,
+              operations: resourceOperations,
               deprecated: get(
-                supportedOperation,
+                relatedClass,
                 '["http://www.w3.org/2002/07/owl#deprecated"][0]["@value"]',
                 false
               )
-            }
+            })
           );
-
-          resourceOperations.push(operation);
-          operations.push(operation);
         }
 
-        const url = get(entrypoint, `[0]["${property["@id"]}"][0]["@id"]`);
-        if (!url) {
-          throw new Error(`Unable to find the URL for "${property["@id"]}".`);
+        // Resolve references
+        for (const field of fields) {
+          if (null !== field.reference) {
+            field.reference =
+              resources.find(resource => resource.id === field.reference) ||
+              null;
+          }
         }
 
-        resources.push(
-          new Resource(guessNameFromUrl(url, entrypointUrl), url, {
-            id: relatedClass["@id"],
-            title: get(
-              relatedClass,
-              '["http://www.w3.org/ns/hydra/core#title"][0]["@value"]',
-              ""
-            ),
-            fields: resourceFields,
-            readableFields,
-            writableFields,
-            operations: resourceOperations,
-            deprecated: get(
-              relatedClass,
-              '["http://www.w3.org/2002/07/owl#deprecated"][0]["@value"]',
-              false
-            )
-          })
-        );
-      }
+        return Promise.resolve({
+          api: new Api(entrypointUrl, { title, resources }),
+          response,
+          status: response.status
+        });
+      },
+      ({ response }) =>
+        Promise.reject({
+          api: new Api(entrypointUrl, { resources: [] }),
+          response,
+          status: get(response, "status")
+        })
+    )
+    .then(({ api, response, status }) => {
+      addFilters(api);
 
-      // Resolve references
-      for (const field of fields) {
-        if (null !== field.reference) {
-          field.reference =
-            resources.find(resource => resource.id === field.reference) || null;
-        }
-      }
-
-      return Promise.resolve({
-        api: new Api(entrypointUrl, { title, resources }),
-        response,
-        status: response.status
-      });
-    },
-    ({ response }) =>
-      Promise.reject({
-        api: new Api(entrypointUrl, { resources: [] }),
-        response,
-        status: get(response, "status")
-      })
-  );
+      return { api, response, status };
+    });
 }
