@@ -1,6 +1,7 @@
 // @flow
 
 import Field from "./Field";
+import Filter from "./Filter";
 import Operation from "./Operation";
 
 type ResourceOptions = {
@@ -9,6 +10,7 @@ type ResourceOptions = {
   deprecated?: boolean,
   readableFields?: Field[],
   writableFields?: Field[],
+  filters?: Filter[],
   operations?: Operation[]
 };
 

@@ -552,6 +552,30 @@ const docs = `{
 ]
 }`;
 
+const resourceCollection = `{
+  "hydra:search": {
+    "hydra:mapping": [
+      {
+        "property": "id",
+        "variable": "id"
+      },
+      {
+        "variable": "test"
+      }
+    ]
+  }
+}`;
+
+const filters = [
+  {
+    property: "id",
+    variable: "id"
+  },
+  {
+    variable: "test"
+  }
+];
+
 const book = {
   name: "books",
   url: "http://localhost/books",
@@ -743,7 +767,8 @@ const book = {
       deprecated: false
     }
   ],
-  deprecated: false
+  deprecated: false,
+  filters: filters
 };
 
 const review = {
@@ -886,7 +911,8 @@ const review = {
       deprecated: false
     }
   ],
-  deprecated: false
+  deprecated: false,
+  filters: filters
 };
 
 const customResource = {
@@ -1012,7 +1038,8 @@ const customResource = {
       deprecated: false
     }
   ],
-  deprecated: false
+  deprecated: false,
+  filters: filters
 };
 
 const deprecatedResource = {
@@ -1072,13 +1099,16 @@ const deprecatedResource = {
       deprecated: true
     }
   ],
-  deprecated: true
+  deprecated: true,
+  filters: filters
 };
+
+const resources = [book, review, customResource, deprecatedResource];
 
 const expectedApi = {
   entrypoint: "http://localhost",
   title: "API Platform's demo",
-  resources: [book, review, customResource, deprecatedResource]
+  resources: resources
 };
 
 const init = {
@@ -1091,30 +1121,45 @@ const init = {
   })
 };
 
-test("parse a Hydra documentation", () => {
-  fetch.mockResponses([entrypoint, init], [docs, init]);
+test("parse a Hydra documentation", async () => {
+  fetch.mockResponses(
+    [entrypoint, init],
+    [docs, init],
+    [resourceCollection, init],
+    [resourceCollection, init],
+    [resourceCollection, init],
+    [resourceCollection, init]
+  );
 
   const options = { headers: new Headers({ CustomHeader: "customValue" }) };
 
-  return parseHydraDocumentation("http://localhost", options).then(data => {
+  await parseHydraDocumentation("http://localhost", options).then(data => {
     expect(JSON.stringify(data.api, null, 2)).toBe(
       JSON.stringify(expectedApi, null, 2)
     );
     expect(data.response).toBeDefined();
     expect(data.status).toBe(200);
 
-    expect(fetch).toHaveBeenCalledTimes(2);
-    expect(fetch).toHaveBeenLastCalledWith(
+    expect(fetch).toHaveBeenCalledTimes(2 + resources.length);
+    expect(fetch).toHaveBeenNthCalledWith(
+      2,
       "http://localhost/docs.jsonld",
       options
     );
   });
 });
 
-test("parse a Hydra documentation (http://localhost/)", () => {
-  fetch.mockResponses([entrypoint, init], [docs, init]);
+test("parse a Hydra documentation (http://localhost/)", async () => {
+  fetch.mockResponses(
+    [entrypoint, init],
+    [docs, init],
+    [resourceCollection, init],
+    [resourceCollection, init],
+    [resourceCollection, init],
+    [resourceCollection, init]
+  );
 
-  return parseHydraDocumentation("http://localhost/").then(data => {
+  await parseHydraDocumentation("http://localhost/").then(data => {
     expect(JSON.stringify(data.api, null, 2)).toBe(
       JSON.stringify(expectedApi, null, 2)
     );
@@ -1149,7 +1194,7 @@ test("parse a Hydra documentation without authorization", () => {
   });
 });
 
-test('Parse entrypoint without "@type" key', () => {
+test('Parse entrypoint without "@type" key', async () => {
   const entrypoint = `{
   "@context": {
     "@vocab": "http://localhost/docs.jsonld#",
@@ -1175,12 +1220,18 @@ test('Parse entrypoint without "@type" key', () => {
 
   fetch.mockResponses([entrypoint, init], [docs, init]);
 
-  parseHydraDocumentation("http://localhost/").catch(data => {
-    expect(data.message).toBe('The API entrypoint has no "@type" key.');
-  });
+  let expectedError;
+
+  try {
+    await parseHydraDocumentation("http://localhost/");
+  } catch (error) {
+    expectedError = error;
+  }
+
+  expect(expectedError.message).toBe('The API entrypoint has no "@type" key.');
 });
 
-test('Parse entrypoint class without "supportedClass" key', () => {
+test('Parse entrypoint class without "supportedClass" key', async () => {
   const docs = `{
 "@context": {
   "@vocab": "http://localhost/docs.jsonld#",
@@ -1218,14 +1269,20 @@ test('Parse entrypoint class without "supportedClass" key', () => {
 
   fetch.mockResponses([entrypoint, init], [docs, init]);
 
-  parseHydraDocumentation("http://localhost/").catch(data => {
-    expect(data.message).toBe(
-      'The API documentation has no "http://www.w3.org/ns/hydra/core#supportedClass" key or its value is not an array.'
-    );
-  });
+  let expectedError;
+
+  try {
+    await parseHydraDocumentation("http://localhost/");
+  } catch (error) {
+    expectedError = error;
+  }
+
+  expect(expectedError.message).toBe(
+    'The API documentation has no "http://www.w3.org/ns/hydra/core#supportedClass" key or its value is not an array.'
+  );
 });
 
-test('Parse entrypoint class without "supportedProperty" key', () => {
+test('Parse entrypoint class without "supportedProperty" key', async () => {
   const docs = `{
 "@context": {
   "@vocab": "http://localhost/docs.jsonld#",
@@ -1276,33 +1333,51 @@ test('Parse entrypoint class without "supportedProperty" key', () => {
 
   fetch.mockResponses([entrypoint, init], [docs, init]);
 
-  parseHydraDocumentation("http://localhost/").catch(data => {
-    expect(data.message).toBe(
-      'The entrypoint definition has no "http://www.w3.org/ns/hydra/core#supportedProperty" key or it is not an array.'
-    );
-  });
+  let expectedError;
+
+  try {
+    await parseHydraDocumentation("http://localhost/");
+  } catch (error) {
+    expectedError = error;
+  }
+
+  expect(expectedError.message).toBe(
+    'The entrypoint definition has no "http://www.w3.org/ns/hydra/core#supportedProperty" key or it is not an array.'
+  );
 });
 
-test("Invalid docs JSON", () => {
+test("Invalid docs JSON", async () => {
   const docs = `{foo,}`;
 
   fetch.mockResponses([entrypoint, init], [docs, init]);
 
-  parseHydraDocumentation("http://localhost/").catch(data => {
-    expect(data).toHaveProperty("api");
-    expect(data).toHaveProperty("response");
-    expect(data).toHaveProperty("status");
-  });
+  let expectedError;
+
+  try {
+    await parseHydraDocumentation("http://localhost/");
+  } catch (error) {
+    expectedError = error;
+  }
+
+  expect(expectedError).toHaveProperty("api");
+  expect(expectedError).toHaveProperty("response");
+  expect(expectedError).toHaveProperty("status");
 });
 
-test("Invalid entrypoint JSON", () => {
-  const entrypoint = `{foo,}`;
+test("Invalid entrypoint JSON", async () => {
+  let entrypoint = `{foo,}`;
 
   fetch.mockResponses([entrypoint, init], [docs, init]);
 
-  parseHydraDocumentation("http://localhost/").catch(data => {
-    expect(data).toHaveProperty("api");
-    expect(data).toHaveProperty("response");
-    expect(data).toHaveProperty("status");
-  });
+  let expectedError;
+
+  try {
+    await parseHydraDocumentation("http://localhost/");
+  } catch (error) {
+    expectedError = error;
+  }
+
+  expect(expectedError).toHaveProperty("api");
+  expect(expectedError).toHaveProperty("response");
+  expect(expectedError).toHaveProperty("status");
 });
