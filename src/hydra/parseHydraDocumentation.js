@@ -195,16 +195,16 @@ async function addFilters(api) {
 
     let response = await fetchResource(resource.url);
 
-    if (response["filters"]) {
-      for (const filter of response["filters"]) {
-        let property = filter["property"];
+    if (response.filters) {
+      for (const filter of response.filters) {
+        let property = filter.property;
 
-        // To prevent PropertyFilter, maybe should be handle specifically ?
+        // TODO : To prevent PropertyFilter, maybe should be handle specifically ?
         if (property === null) {
           continue;
         }
 
-        const resourceFilter = new Filter(property, filter["variable"]);
+        const resourceFilter = new Filter(property, filter.variable);
 
         resourceFilters.push(resourceFilter);
       }
@@ -482,8 +482,8 @@ export default function parseHydraDocumentation(entrypointUrl, options = {}) {
         })
     )
     .then(({ api, response, status }) => {
-      addFilters(api);
-
-      return { api, response, status };
+      return addFilters(api).then(api => {
+        return { api, response, status };
+      });
     });
 }
