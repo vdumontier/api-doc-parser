@@ -448,7 +448,7 @@ export default function parseHydraDocumentation(entrypointUrl, options = {}) {
         })
     )
     .then(({ api, response, status }) => {
-      return addFilters(api).then(api => {
+      return addFilters(api, options).then(api => {
         return { api, response, status };
       });
     });

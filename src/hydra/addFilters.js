@@ -1,11 +1,11 @@
 import Filter from "../Filter";
 import fetchResource from "./fetchResource";
 
-export default api => {
+export default (api, options = {}) => {
   const promises = [];
 
   for (const resource of api.resources) {
-    let promise = fetchResource(resource.url).then(response => {
+    let promise = fetchResource(resource.url, options).then(response => {
       if (!response.filters) {
         return [];
       }

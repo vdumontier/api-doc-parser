@@ -1,13 +1,15 @@
 import fetchJsonLd from "./fetchJsonLd";
 import get from "lodash.get";
 
-export default async entrypointUrl => {
-  return await fetchJsonLd(entrypointUrl, { itemsPerPage: 0 }).then(
+export default async (entrypointUrl, options = {}) => {
+  let opts = { ...options, itemsPerPage: 0 };
+  return await fetchJsonLd(entrypointUrl, opts).then(
     d => ({
       filters: get(d, "body.hydra:search.hydra:mapping")
     }),
-    () => {
-      throw new Error("Unreachable resource");
+    response => {
+      // We need to return response to handle 401 -> login redirection (example) after parseHydraDocumentation
+      return response;
     }
   );
 };
